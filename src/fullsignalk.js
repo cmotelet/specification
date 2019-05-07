@@ -30,15 +30,32 @@ function FullSignalK(id, type, defaults) {
     self: id,
     version: "0.1.0" // Should we read this from the package.json file?
   };
+  this.userMeta = {};
   if(id) {
     this.root.vessels[id] = defaults && defaults.vessels && defaults.vessels.self ? defaults.vessels.self : {};
     this.self = this.root.vessels[id];
     signalkSchema.fillIdentity(this.root)
     this.root.self = 'vessels.' + id
+    extractUserMeta(this.self, this.root.self, this.userMeta);
   }
   this.sources = {};
   this.root.sources = this.sources;
   this.lastModifieds = {};
+}
+
+function extractUserMeta(obj, path, userMeta) {
+  for (let k in obj) {
+    if (obj[k] && typeof obj[k] === 'object') {
+      var currentPath = ((path.length) ? path + '.' : '') + k;
+      if (obj[k].hasOwnProperty('meta')) {
+        debug('Found key meta[' + currentPath + ']:', obj[k]);
+        _.set(userMeta, currentPath, obj[k]);
+        delete obj[k];
+        continue;
+      }
+      extractUserMeta(obj[k], currentPath, userMeta)
+    }
+  }
 }
 
 require("util").inherits(FullSignalK, require("events").EventEmitter);
@@ -105,7 +122,7 @@ FullSignalK.prototype.addUpdate = function(context, contextPath, update) {
   } else {
     console.error("No source in delta update:" + JSON.stringify(update));
   }
-  addValues(context, contextPath, update.source || update['$source'], update.timestamp, update.values);
+  addValues(context, contextPath, update.source || update['$source'], update.timestamp, update.values, this.userMeta);
 }
 
 FullSignalK.prototype.updateDollarSource = function(context, dollarSource, timestamp) {
@@ -168,14 +185,14 @@ function handleOtherSource(sourceLeaf, source, timestamp) {
   sourceLeaf.timestamp = timestamp;
 }
 
-function addValues(context, contextPath, source, timestamp, pathValues) {
+function addValues(context, contextPath, source, timestamp, pathValues, userMeta) {
   var len = pathValues.length;
   for (var i = 0; i < len; ++i) {
-    addValue(context, contextPath, source, timestamp, pathValues[i]);
+    addValue(context, contextPath, source, timestamp, pathValues[i], userMeta);
   }
 }
 
-function addValue(context, contextPath, source, timestamp, pathValue) {
+function addValue(context, contextPath, source, timestamp, pathValue, userMeta) {
   if (_.isUndefined(pathValue.path) || _.isUndefined(pathValue.value)) {
     console.error("Illegal value in delta:" + JSON.stringify(pathValue));
     return;
@@ -189,7 +206,11 @@ function addValue(context, contextPath, source, timestamp, pathValue) {
     valueLeaf = splitPath.reduce(function(previous, pathPart, i) {
       if (!previous[pathPart]) {
         previous[pathPart] = {};
-        let meta = signalkSchema.getMetadata(contextPath + '.' + pathValue.path)
+        let meta = signalkSchema.getMetadata(contextPath + '.' + pathValue.path);
+        const userMetaContent = _.get(userMeta, contextPath + '.' + pathValue.path + '.meta', null);
+        if (typeof userMetaContent !== null) {
+          _.merge(meta, userMetaContent);
+        }
         if (meta && i === splitPath.length-1) {
           //ignore properties from keyswithmetadata.json
           meta = JSON.parse(JSON.stringify(meta))
