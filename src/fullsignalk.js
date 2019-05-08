@@ -30,30 +30,32 @@ function FullSignalK(id, type, defaults) {
     self: id,
     version: "0.1.0" // Should we read this from the package.json file?
   };
-  this.userMeta = {};
   if(id) {
     this.root.vessels[id] = defaults && defaults.vessels && defaults.vessels.self ? defaults.vessels.self : {};
     this.self = this.root.vessels[id];
     signalkSchema.fillIdentity(this.root)
     this.root.self = 'vessels.' + id
-    extractUserMeta(this.self, this.root.self, this.userMeta);
+    fillWithUserMetadata(this.self, this.root.self);
   }
   this.sources = {};
   this.root.sources = this.sources;
   this.lastModifieds = {};
 }
 
-function extractUserMeta(obj, path, userMeta) {
-  for (let k in obj) {
+function fillWithUserMetadata(obj, path) {
+  for (var k in obj) {
     if (obj[k] && typeof obj[k] === 'object') {
-      var currentPath = ((path.length) ? path + '.' : '') + k;
+      var currentPath = (path.length ? path + '.' : '') + k;
       if (obj[k].hasOwnProperty('meta')) {
-        debug('Found key meta[' + currentPath + ']:', obj[k]);
-        _.set(userMeta, currentPath, obj[k]);
-        delete obj[k];
-        continue;
+        var meta = signalkSchema.getMetadata(currentPath);
+        obj[k].meta = _.defaults(obj[k].meta, meta);
+        var newRegex = {};
+        newRegex.regexp = new RegExp('^/' + currentPath.replace(/\./g, '\/') + '$');
+        newRegex.metadata = _.assign(obj[k].meta);
+        signalkSchema.addMetadataRegex(newRegex)
+        delete obj[k].meta.properties;
       }
-      extractUserMeta(obj[k], currentPath, userMeta)
+      fillWithUserMetadata(obj[k], currentPath);
     }
   }
 }
@@ -122,7 +124,7 @@ FullSignalK.prototype.addUpdate = function(context, contextPath, update) {
   } else {
     console.error("No source in delta update:" + JSON.stringify(update));
   }
-  addValues(context, contextPath, update.source || update['$source'], update.timestamp, update.values, this.userMeta);
+  addValues(context, contextPath, update.source || update['$source'], update.timestamp, update.values);
 }
 
 FullSignalK.prototype.updateDollarSource = function(context, dollarSource, timestamp) {
@@ -185,14 +187,14 @@ function handleOtherSource(sourceLeaf, source, timestamp) {
   sourceLeaf.timestamp = timestamp;
 }
 
-function addValues(context, contextPath, source, timestamp, pathValues, userMeta) {
+function addValues(context, contextPath, source, timestamp, pathValues) {
   var len = pathValues.length;
   for (var i = 0; i < len; ++i) {
-    addValue(context, contextPath, source, timestamp, pathValues[i], userMeta);
+    addValue(context, contextPath, source, timestamp, pathValues[i]);
   }
 }
 
-function addValue(context, contextPath, source, timestamp, pathValue, userMeta) {
+function addValue(context, contextPath, source, timestamp, pathValue) {
   if (_.isUndefined(pathValue.path) || _.isUndefined(pathValue.value)) {
     console.error("Illegal value in delta:" + JSON.stringify(pathValue));
     return;
@@ -206,16 +208,11 @@ function addValue(context, contextPath, source, timestamp, pathValue, userMeta) 
     valueLeaf = splitPath.reduce(function(previous, pathPart, i) {
       if (!previous[pathPart]) {
         previous[pathPart] = {};
-        let meta = signalkSchema.getMetadata(contextPath + '.' + pathValue.path);
-        const userMetaContent = _.get(userMeta, contextPath + '.' + pathValue.path + '.meta', null);
-        if (typeof userMetaContent !== null) {
-          _.merge(meta, userMetaContent);
-        }
+        let meta = signalkSchema.getMetadata(contextPath + '.' + pathValue.path)
         if (meta && i === splitPath.length-1) {
           //ignore properties from keyswithmetadata.json
           meta = JSON.parse(JSON.stringify(meta))
           delete meta.properties
-          
           previous[pathPart].meta = meta;
         }
       }

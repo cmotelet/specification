@@ -270,4 +270,5 @@ describe('FullSignalK', function() {
     vessel.navigation.courseOverGroundTrue.meta.should.have.property('units', 'rad');
     vessel.navigation.courseOverGroundTrue.should.have.property('value', 2.485697921257882);
   })
+
 })
